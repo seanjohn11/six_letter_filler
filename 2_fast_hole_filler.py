@@ -1,6 +1,7 @@
 import asyncio
 from pyppeteer import launch
 from pyppeteer.errors import TimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 #hole_list = [1X,4X,39,49X,51X,53X,62,87X,94,95,98,105,109,123,145,150,164,166,175]
 hole_list = [98]
@@ -51,22 +52,37 @@ async def generate_combinations(page, start_word, end_word):
 
     return combinations
 
+async def submit_answer_wrapper(page, answer):
+    """
+    wrapper function to submit answer asynchronously
+    unsure if needed or if would work anyway just directly calling submit_answer
+    """
+    message = await submit_answer(page, answer)
+
+    return message
+
 async def main():
     # launch the browser
+    print("Launching browser...")
     browser = await launch(headless=True)
 
     # create a new page
+    print("Creating new page...")
     page = await browser.newPage()
 
     # navigate to the website
+    print("Navigating to the website...")
     await page.goto('http://sixsilversaturns.space/rotateSaturn.php')
     # click on the login link
     await page.click('a[onclick="loginOption()"]')
 
     # login
+    print("Logging in...")
     await page.type('input[name="username"]', "Pieaxeman")
     await page.type('input[name="password"]', "helloWERLD10!")
     await page.click('input#loginButton[value=Login]')
+
+    print("Submitting words...")
     counter = 0
     for number in hole_list:
         six_letter_words = []
@@ -74,14 +90,17 @@ async def main():
         print(word_list_sorted[number])
         six_letter_words = await generate_combinations(page, word_list_sorted[number-1],word_list_sorted[number])
         #six_letter_words = await generate_combinations(page, 'haaaaa',word_list_sorted[number])
-        for word in six_letter_words:
-            counter += 1
-            message = await submit_answer(page, word)
-            if message == "Great job.":
-                print("Found keyword:", word)
-                break
-            if counter % 1000 == 0:
-                print(word)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_submissions = {executor.submit(submit_answer_wrapper, page, word): word for word in six_letter_words}
+            for future in as_completed(future_submissions):
+                word = future_submissions[future]
+                message = future.result()
+                counter += 1
+                if message == "Great job.":
+                    print("Found keyword:", word)
+                    break
+                if counter % 1000 == 0:
+                    print(word)
 
     # close the browser
     await browser.close()
